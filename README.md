@@ -76,6 +76,8 @@ plugins:
 
 Add `pull_requests` to the tools list of each agent that should link pull requests by hand. The hook works for every agent once the plugin is loaded.
 
+The tools always run in MindRoom's own process and are not offered where there is no room, such as the MCP gateway.
+
 Update to the latest commit later with:
 
 ```bash

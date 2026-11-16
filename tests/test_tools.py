@@ -38,8 +38,9 @@ def _load_tools_module() -> ModuleType:
     module = util.module_from_spec(spec)
     sys.modules[module_name] = module
     # A plugin module registers its tools while it loads, as the plugin loader runs it.
-    with plugin_module_registrations(module_name):
+    with plugin_module_registrations(module_name) as registrations:
         spec.loader.exec_module(module)
+    module.registrations = registrations
     return module
 
 
@@ -91,6 +92,11 @@ class FakeRoomState:
 
     def context(self, **kwargs: Any) -> Any:  # noqa: ANN401
         return tool_runtime_context(_tool_context(room_state_querier=self.querier, room_state_putter=self.putter, **kwargs))
+
+
+def test_registration_requires_room_context() -> None:
+    """The tools read room state, so they must always run in the primary runtime."""
+    assert _load_tools_module().registrations["pull_requests"].requires_room_context is True
 
 
 def _key(name: str) -> tuple[str, str, str]:

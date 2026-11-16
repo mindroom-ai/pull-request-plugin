@@ -155,6 +155,7 @@ class PullRequestTools(Toolkit):
     setup_type=SetupType.NONE,
     icon="LuGitPullRequest",
     icon_color="text-green-600",
+    requires_room_context=True,
 )
 def pull_requests_factory() -> type[PullRequestTools]:
     """Factory function for the pull-requests toolkit."""
