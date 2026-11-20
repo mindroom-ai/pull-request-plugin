@@ -132,7 +132,7 @@ async def test_failed_create_links_the_existing_pull_request() -> None:
     module = _load_hooks_module()
     ctx = _context(
         result=(
-            "[cwd: /w]\nExit code 1\n"
+            "Exit code 1\nOutput:\nSee https://github.com/o/r/pull/3\nStderr:\n"
             'a pull request for branch "x" into branch "main" already exists:\n'
             "https://github.com/o/r/pull/12\n"
         ),
@@ -142,6 +142,19 @@ async def test_failed_create_links_the_existing_pull_request() -> None:
 
     ctx.put_room_state.assert_awaited_once()
     assert ctx.put_room_state.await_args.args[2] == '["$thread-root","o/r#12"]'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("notice", ["", "[Showing the last 1 of 2 stderr lines. Pass a larger tail.]\n"])
+async def test_successful_create_links_the_stdout_url_over_a_stderr_url(notice: str) -> None:
+    """A successful create links the URL `gh` printed to stdout, not one a warning on stderr mentions."""
+    module = _load_hooks_module()
+    ctx = _context(result=f"{notice}{PR_URL}\nStderr:\nwarning: see https://github.com/o/r/pull/5")
+
+    await module.link_created_pull_request(ctx)
+
+    ctx.put_room_state.assert_awaited_once()
+    assert ctx.put_room_state.await_args.args[2] == '["$thread-root","o/r#7"]'
 
 
 def _github_result(**fields: object) -> str:

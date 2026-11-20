@@ -22,7 +22,11 @@ _CREATE_COMMANDS = ("gh pr create", "gh pr new")
 
 
 def _created_pull_request(ctx: ToolAfterCallContext) -> PullRequest | None:
-    """Return the pull request a call created: the github tool's `html_url`, or a shell result's last URL."""
+    """Return the pull request a call created: the github tool's `html_url`, or a shell result's last URL.
+
+    A successful command's stdout, before any `Stderr:` section, is where `gh pr create` prints the URL, so it wins over
+    a URL a warning mentions; a failure keeps the whole result, where `gh` names the branch's existing pull request.
+    """
     result = str(ctx.result)
     if ctx.tool_name == _GITHUB_TOOL:
         try:
@@ -37,7 +41,8 @@ def _created_pull_request(ctx: ToolAfterCallContext) -> PullRequest | None:
         command = " ".join(str(part) for part in command)
     if not isinstance(command, str) or not any(create in command for create in _CREATE_COMMANDS):
         return None
-    return last_pull_request(result)
+    stdout = "" if result.startswith("Exit code ") else f"\n{result}".split("\nStderr:\n", 1)[0]
+    return last_pull_request(stdout) or last_pull_request(result)
 
 
 @hook(event="tool:after_call", name="link-created-pull-request", timeout_ms=5000)
