@@ -29,18 +29,26 @@ def _created_pull_request(ctx: ToolAfterCallContext) -> PullRequest | None:
     The receipt of output saved to a file, a dict or its JSON text, is not that output, so it links nothing.
     """
     result = str(ctx.result)
-    try:
-        payload = ctx.result if isinstance(ctx.result, dict) else json.loads(result)
-    except ValueError:
-        payload = None
     if ctx.tool_name == _GITHUB_TOOL:
+        try:
+            payload = json.loads(result)
+        except ValueError:
+            return None
         return parse_pull_request(payload.get("html_url")) if isinstance(payload, dict) else None
-    if ctx.tool_name != _SHELL_TOOL or (isinstance(payload, dict) and "mindroom_tool_output" in payload):
+    if ctx.tool_name != _SHELL_TOOL:
         return None
     command = ctx.arguments.get("args")
     if isinstance(command, list):
         command = " ".join(str(part) for part in command)
     if not isinstance(command, str) or not any(create in command for create in _CREATE_COMMANDS):
+        return None
+    receipt = ctx.result
+    if not isinstance(receipt, dict) and result.startswith("{"):
+        try:
+            receipt = json.loads(result)
+        except (ValueError, RecursionError):  # output that is not JSON, or nests too deep to be a receipt
+            receipt = None
+    if isinstance(receipt, dict) and "mindroom_tool_output" in receipt:
         return None
     if result.startswith("[cwd: "):
         # MindRoom versions that lead every result with the working directory.

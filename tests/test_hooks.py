@@ -185,6 +185,18 @@ async def test_saved_output_receipt_links_nothing(as_text: bool) -> None:
     ctx.put_room_state.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("overrides", [{"tool_name": "other_tool"}, {}], ids=["other-tool", "shell"])
+async def test_deeply_nested_json_output_is_not_decoded_into_an_error(overrides: dict[str, Any]) -> None:
+    """Output that nests deeper than JSON decoding recurses is no receipt: the hook returns and writes nothing."""
+    module = _load_hooks_module()
+    ctx = _context(result='{"a":' * 20000 + "1" + "}" * 20000, **overrides)
+
+    await module.link_created_pull_request(ctx)
+
+    ctx.put_room_state.assert_not_awaited()
+
+
 def _github_result(**fields: object) -> str:
     """Return a result shaped as the github toolkit's `create_pull_request` returns it."""
     pr_info = {
