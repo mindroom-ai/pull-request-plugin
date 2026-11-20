@@ -127,12 +127,13 @@ async def test_gh_pr_new_links_the_created_pull_request() -> None:
 
 
 @pytest.mark.asyncio
-async def test_failed_create_links_the_existing_pull_request() -> None:
-    """A `gh pr create` that fails because the branch has a pull request links that pull request."""
+@pytest.mark.parametrize("header", ["", "[cwd: /w]\n"])
+async def test_failed_create_links_the_existing_pull_request(header: str) -> None:
+    """A failed `gh pr create` links the branch's existing pull request, with or without a leading cwd line."""
     module = _load_hooks_module()
     ctx = _context(
         result=(
-            "Exit code 1\nOutput:\nSee https://github.com/o/r/pull/3\nStderr:\n"
+            f"{header}Exit code 1\nOutput:\nSee https://github.com/o/r/pull/3\nStderr:\n"
             'a pull request for branch "x" into branch "main" already exists:\n'
             "https://github.com/o/r/pull/12\n"
         ),
@@ -155,6 +156,18 @@ async def test_successful_create_links_the_stdout_url_over_a_stderr_url(notice: 
 
     ctx.put_room_state.assert_awaited_once()
     assert ctx.put_room_state.await_args.args[2] == '["$thread-root","o/r#7"]'
+
+
+@pytest.mark.asyncio
+async def test_saved_output_receipt_links_nothing() -> None:
+    """The receipt of a create whose output went to a file links nothing, whatever its fields mention."""
+    module = _load_hooks_module()
+    receipt = {"status": "saved_to_file", "path": "out.txt", "stderr_tail": "see https://github.com/o/r/pull/5"}
+    ctx = _context(result=json.dumps({"mindroom_tool_output": receipt}))
+
+    await module.link_created_pull_request(ctx)
+
+    ctx.put_room_state.assert_not_awaited()
 
 
 def _github_result(**fields: object) -> str:

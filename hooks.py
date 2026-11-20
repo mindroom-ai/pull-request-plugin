@@ -26,21 +26,25 @@ def _created_pull_request(ctx: ToolAfterCallContext) -> PullRequest | None:
 
     A successful command's stdout, before any `Stderr:` section, is where `gh pr create` prints the URL, so it wins over
     a URL a warning mentions; a failure keeps the whole result, where `gh` names the branch's existing pull request.
+    The receipt of output saved to a file holds none of that output, so it links nothing.
     """
     result = str(ctx.result)
+    try:
+        payload = json.loads(result)
+    except ValueError:
+        payload = None
     if ctx.tool_name == _GITHUB_TOOL:
-        try:
-            payload = json.loads(result)
-        except ValueError:
-            return None
         return parse_pull_request(payload.get("html_url")) if isinstance(payload, dict) else None
-    if ctx.tool_name != _SHELL_TOOL:
+    if ctx.tool_name != _SHELL_TOOL or (isinstance(payload, dict) and "mindroom_tool_output" in payload):
         return None
     command = ctx.arguments.get("args")
     if isinstance(command, list):
         command = " ".join(str(part) for part in command)
     if not isinstance(command, str) or not any(create in command for create in _CREATE_COMMANDS):
         return None
+    if result.startswith("[cwd: "):
+        # MindRoom versions that lead every result with the working directory.
+        result = result.partition("\n")[2]
     stdout = "" if result.startswith("Exit code ") else f"\n{result}".split("\nStderr:\n", 1)[0]
     return last_pull_request(stdout) or last_pull_request(result)
 
