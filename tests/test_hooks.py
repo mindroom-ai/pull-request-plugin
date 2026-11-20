@@ -159,11 +159,26 @@ async def test_successful_create_links_the_stdout_url_over_a_stderr_url(notice: 
 
 
 @pytest.mark.asyncio
-async def test_saved_output_receipt_links_nothing() -> None:
-    """The receipt of a create whose output went to a file links nothing, whatever its fields mention."""
+async def test_a_stderr_line_printed_to_stdout_stays_in_stdout() -> None:
+    """A `Stderr:` line that stdout prints ahead of the stderr section does not hide the URL printed after it."""
     module = _load_hooks_module()
-    receipt = {"status": "saved_to_file", "path": "out.txt", "stderr_tail": "see https://github.com/o/r/pull/5"}
-    ctx = _context(result=json.dumps({"mindroom_tool_output": receipt}))
+    stdout = f"Previous https://github.com/o/r/pull/5\nStderr:\n{PR_URL}"
+    ctx = _context(result=f"{stdout}\nStderr:\nwarning: see https://github.com/o/r/pull/3")
+
+    await module.link_created_pull_request(ctx)
+
+    ctx.put_room_state.assert_awaited_once()
+    assert ctx.put_room_state.await_args.args[2] == '["$thread-root","o/r#7"]'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("as_text", [True, False], ids=["json", "dict"])
+async def test_saved_output_receipt_links_nothing(as_text: bool) -> None:
+    """The receipt of a create whose output went to a file links nothing, as JSON text or as an auto-save's dict."""
+    module = _load_hooks_module()
+    receipt = {"status": "saved_to_file", "path": "out.txt", "preview": "see https://github.com/o/r/pull/5"}
+    envelope = {"mindroom_tool_output": receipt}
+    ctx = _context(result=json.dumps(envelope) if as_text else envelope)
 
     await module.link_created_pull_request(ctx)
 

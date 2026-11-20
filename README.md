@@ -24,7 +24,7 @@ Agents open GitHub pull requests from inside a Matrix thread. This plugin record
 ## How It Works
 
 1. An agent creates a pull request with `gh pr create` (or its alias `gh pr new`) in its shell tool, or with the `github` toolkit's `create_pull_request`.
-2. After the call, the `link-created-pull-request` hook picks the created pull request: for a shell command, the last pull request URL of the output, which is where `gh pr create` prints it, taken from stdout (before any `Stderr:` section) when the command succeeded and from the whole output, where `gh` names the branch's existing pull request, when it failed (a leading `[cwd: ...]` line of older MindRoom versions is skipped, and the receipt of output saved with `mindroom_output_path` links nothing); for the `github` toolkit, the `html_url` of the created pull request in its JSON result.
+2. After the call, the `link-created-pull-request` hook picks the created pull request: for a shell command, the last pull request URL of the output, which is where `gh pr create` prints it, taken from stdout (before the last `Stderr:` line) when the command succeeded and from the whole output, where `gh` names the branch's existing pull request, when it failed (a leading `[cwd: ...]` line of older MindRoom versions is skipped, and the receipt of output saved to a file links nothing); for the `github` toolkit, the `html_url` of the created pull request in its JSON result.
 3. If the call ran in a thread and the pull request is not linked to it yet, the hook writes one state event for it.
 4. Chat clients read the state events of the room and show the links of each thread.
 

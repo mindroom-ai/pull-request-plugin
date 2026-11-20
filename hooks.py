@@ -26,11 +26,11 @@ def _created_pull_request(ctx: ToolAfterCallContext) -> PullRequest | None:
 
     A successful command's stdout, before any `Stderr:` section, is where `gh pr create` prints the URL, so it wins over
     a URL a warning mentions; a failure keeps the whole result, where `gh` names the branch's existing pull request.
-    The receipt of output saved to a file holds none of that output, so it links nothing.
+    The receipt of output saved to a file, a dict or its JSON text, is not that output, so it links nothing.
     """
     result = str(ctx.result)
     try:
-        payload = json.loads(result)
+        payload = ctx.result if isinstance(ctx.result, dict) else json.loads(result)
     except ValueError:
         payload = None
     if ctx.tool_name == _GITHUB_TOOL:
@@ -45,7 +45,10 @@ def _created_pull_request(ctx: ToolAfterCallContext) -> PullRequest | None:
     if result.startswith("[cwd: "):
         # MindRoom versions that lead every result with the working directory.
         result = result.partition("\n")[2]
-    stdout = "" if result.startswith("Exit code ") else f"\n{result}".split("\nStderr:\n", 1)[0]
+    # The last `Stderr:` line starts the stderr section, so one that stdout prints ahead of it stays in stdout. The text
+    # alone cannot tell a `Stderr:` line that stderr prints, or that stdout prints when there is no stderr, from the
+    # section's start; with a pull request URL on both sides of it, those link the one before it.
+    stdout = "" if result.startswith("Exit code ") else f"\n{result}".rsplit("\nStderr:\n", 1)[0]
     return last_pull_request(stdout) or last_pull_request(result)
 
 
