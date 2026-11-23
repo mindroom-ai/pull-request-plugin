@@ -83,7 +83,7 @@ All three tools are thread-scoped only: they work from a thread's first message 
 - **State key:** `["<thread root event ID>","<owner>/<repo>#<number>"]` as compact JSON (no spaces), with owner and repository lowercased
 - **Payload fields:**
   - `url`: `https://github.com/<owner>/<repo>/pull/<number>` (owner and repository lowercased)
-  - `set_by`: agent name (or requester ID if agent name is unavailable)
+  - `set_by`: `ctx.agent_name` when linked by the `tool:after_call` hook; agent name (falling back to requester ID when agent name is absent) when linked manually via `link_pull_request`
   - `set_at`: UTC ISO 8601 timestamp
 - **Ordering:** `list_pull_requests()` returns links sorted by `set_at`
 - **Unlinking:** writes an empty tombstone payload (`{}`) for that state key
