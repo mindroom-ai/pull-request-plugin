@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import sys
 from importlib import util
@@ -21,6 +22,7 @@ from mindroom.config.main import Config, ConfigRuntimeValidationError
 from mindroom.constants import resolve_runtime_paths
 from mindroom.hooks import HookBindings
 from mindroom.message_target import MessageTarget
+from mindroom.plugin_api import Toolkit
 from mindroom.tool_approval_grants import grant_operation
 from mindroom.tool_system.registry import ToolRegistry, plugin_module_registrations
 from mindroom.tool_system.runtime_context import ToolRuntimeContext, tool_runtime_context
@@ -157,9 +159,10 @@ def test_registration_and_single_tool_exposure() -> None:
         "unlink_pull_request": "pull_requests",
         "list_pull_requests": "pull_requests",
     }
-    assert list(tools.functions) == []
-    assert list(tools.async_functions) == ["pull_requests"]
-    assert [fn.__name__ for fn in tools.tools] == ["pull_requests"]
+    assert isinstance(tools, Toolkit)
+    assert list(tools.functions) == ["pull_requests"]
+    assert tools.functions["pull_requests"] == tools.pull_requests
+    assert inspect.iscoroutinefunction(tools.functions["pull_requests"])
     assert not hasattr(tools, "link_pull_request")
     assert not hasattr(tools, "unlink_pull_request")
     assert not hasattr(tools, "list_pull_requests")

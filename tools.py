@@ -8,12 +8,11 @@ import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 
-from agno.tools import Toolkit
-
 from mindroom.plugin_api import (
     SetupType,
     ToolCategory,
     ToolFileAccess,
+    Toolkit,
     ToolRuntimeContext,
     ToolStatus,
     get_logger,
@@ -21,6 +20,7 @@ from mindroom.plugin_api import (
     register_tool_with_metadata,
     resolve_accessible_room_id,
     shared_room_ids,
+    tool,
 )
 
 from .state import (
@@ -284,9 +284,9 @@ class PullRequestTools(Toolkit):
                 "Use `pull_requests` to link/unlink PRs on this thread or list linked PRs for this thread, "
                 "a room, or all shared rooms."
             ),
-            tools=[self.pull_requests],
         )
 
+    @tool
     async def pull_requests(
         self,
         action: Literal["link", "unlink", "list"],
