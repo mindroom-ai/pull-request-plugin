@@ -14,7 +14,7 @@
 A [MindRoom](https://github.com/mindroom-ai/mindroom) plugin that links GitHub pull requests to Matrix threads as room state, so agents and chat clients always know which PRs belong to each conversation.
 
 - **Auto-linking on creation:** whenever an agent creates a PR with `gh pr create` (or `gh pr new`) in its shell tool, or with the `github` toolkit's `create_pull_request`, a hook links it to the thread automatically.
-- **Manual linking tools:** agents with the `pull_requests` toolkit can link, unlink, and list PRs for the current thread (supporting multiple PRs per thread and one PR across multiple threads).
+- **Manual linking tools:** agents with the `pull_requests` toolkit can link and unlink PRs on the current thread, and list linked PRs for the current thread, a room, or all shared rooms (with optional `resolved` filtering).
 - **MindRoom Chat UI:** the bundled [`pull-request-client-plugin`](https://github.com/mindroom-ai/pull-request-client-plugin) reads these links to display thread card PR chips, hover details, the thread PR menu, and an in-app diff side panel.
 
 ```text
@@ -40,7 +40,7 @@ agents:
 The auto-linking hook works for every agent automatically once the plugin is loaded, and no plugin `settings:` are needed. Add `pull_requests` to `agents.<name>.tools` for any agent that should also link, unlink, or list PRs manually.
 
 Update later with `mindroom plugins update pull-request-plugin`.
-Needs MindRoom v2026.11.323 or later (plugin API 1.30).
+Needs a MindRoom version supporting plugin API 1.35 or later.
 
 ## Tools
 
@@ -50,9 +50,9 @@ Toolkit name: `pull_requests`.
 |------|---------|
 | `link_pull_request(url)` | Link a GitHub pull request URL to the current thread |
 | `unlink_pull_request(url)` | Remove a pull request link from the current thread |
-| `list_pull_requests()` | List the pull requests linked to the current thread |
+| `list_pull_requests(scope=None, room_id=None, resolved=None)` | List linked pull requests for the current thread (default), a room (`scope="room"`, optional `room_id`), or all shared rooms (`scope="all"` or `room_id="all"`), optionally filtered by thread `resolved` status |
 
-All three tools are thread-scoped only: they work from a thread's first message on and refuse room-level calls. Because they require room context, they always run in MindRoom's primary process and are omitted where there is no room (such as the MCP gateway).
+`link_pull_request` and `unlink_pull_request` are thread-scoped and require an active thread. `list_pull_requests` defaults to the current thread when called with no arguments, while room-wide and cross-room (`scope="room"` / `scope="all"`) listings also work outside a thread and check requester room access. Because they require room context, these tools always run in MindRoom's primary process and are omitted where there is no room (such as the MCP gateway).
 
 ## Hooks
 
@@ -85,7 +85,7 @@ All three tools are thread-scoped only: they work from a thread's first message 
   - `url`: `https://github.com/<owner>/<repo>/pull/<number>` (owner and repository lowercased)
   - `set_by`: `ctx.agent_name` when linked by the `tool:after_call` hook; agent name (falling back to requester ID when agent name is absent) when linked manually via `link_pull_request`
   - `set_at`: UTC ISO 8601 timestamp
-- **Ordering:** `list_pull_requests()` returns links sorted by `set_at`
+- **Ordering:** `list_pull_requests()` returns thread links sorted by `set_at`, room links sorted by `(set_at, thread_id, name)`, and cross-room links sorted by `(set_at, room_id, thread_id, name)` (with `resolved` status read from `com.mindroom.thread.tags`)
 - **Unlinking:** writes an empty tombstone payload (`{}`) for that state key
 
 </details>

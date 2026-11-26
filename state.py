@@ -10,11 +10,15 @@ from dataclasses import dataclass
 from typing import Any
 
 THREAD_PULL_REQUEST_EVENT_TYPE = "com.mindroom.thread.pull_request"
+THREAD_TAGS_EVENT_TYPE = "com.mindroom.thread.tags"
+RESOLVED_THREAD_TAG = "resolved"
 
 type RoomStateQuerier = Callable[[str, str, str | None], Awaitable[dict[str, Any] | None]]
 type RoomStatePutter = Callable[[str, str, str, dict[str, Any]], Awaitable[bool]]
 
-_PREFIX = r"https://github\.com/(?P<owner>[A-Za-z0-9-]{1,39})/(?P<repo>[A-Za-z0-9._-]{1,100})/pull/(?P<number>[0-9]{1,10})"
+_PREFIX = (
+    r"https://github\.com/(?P<owner>[A-Za-z0-9-]{1,39})/(?P<repo>[A-Za-z0-9._-]{1,100})/pull/(?P<number>[0-9]{1,10})"
+)
 _WHOLE_URL = re.compile(_PREFIX + r"(?:[/?#]\S*)?")
 _URL_IN_TEXT = re.compile(_PREFIX + r"(?![A-Za-z0-9_-])")
 
@@ -75,9 +79,29 @@ def link_state_key(thread_id: str, pull_request: PullRequest) -> str:
     return json.dumps([thread_id, pull_request.name], separators=(",", ":"))
 
 
-def _parse_link(thread_id: str, state_key: str, content: object) -> ThreadLink | None:
-    if not isinstance(content, Mapping) or not content:
+def _parse_state_key_pair(state_key: object) -> tuple[str, str] | None:
+    if not isinstance(state_key, str):
         return None
+    try:
+        parsed = json.loads(state_key)
+    except (ValueError, RecursionError):
+        return None
+    if not isinstance(parsed, list) or len(parsed) != 2:
+        return None
+    first, second = parsed
+    if not isinstance(first, str) or not isinstance(second, str):
+        return None
+    thread_id = first.strip()
+    if not thread_id:
+        return None
+    return thread_id, second
+
+
+def _parse_room_link(state_key: str, content: object) -> tuple[str, ThreadLink] | None:
+    pair = _parse_state_key_pair(state_key)
+    if pair is None or not isinstance(content, Mapping) or not content:
+        return None
+    thread_id, _ = pair
     pull_request = parse_pull_request(content.get("url"))
     set_by = content.get("set_by")
     set_at = content.get("set_at")
@@ -85,7 +109,21 @@ def _parse_link(thread_id: str, state_key: str, content: object) -> ThreadLink |
         return None
     if state_key != link_state_key(thread_id, pull_request):
         return None
-    return ThreadLink(pull_request, set_by, set_at)
+    return thread_id, ThreadLink(pull_request, set_by, set_at)
+
+
+async def read_room_links(
+    query_room_state: RoomStateQuerier,
+    room_id: str,
+) -> list[tuple[str, ThreadLink]] | None:
+    """Read all valid pull request links of one room, ordered deterministically."""
+    states = await query_room_state(room_id, THREAD_PULL_REQUEST_EVENT_TYPE, None)
+    if states is None:
+        return None
+    links = [
+        parsed for state_key, content in states.items() if (parsed := _parse_room_link(state_key, content)) is not None
+    ]
+    return sorted(links, key=lambda item: (item[1].set_at, item[0], item[1].pull_request.name))
 
 
 async def read_thread_links(
@@ -94,15 +132,28 @@ async def read_thread_links(
     thread_id: str,
 ) -> list[ThreadLink]:
     """Read the valid pull request links of one thread, in set_at order."""
-    states = await query_room_state(room_id, THREAD_PULL_REQUEST_EVENT_TYPE, None)
-    if not states:
+    room_links = await read_room_links(query_room_state, room_id)
+    if room_links is None:
         return []
-    links = [
-        link
-        for state_key, content in states.items()
-        if (link := _parse_link(thread_id, state_key, content)) is not None
-    ]
-    return sorted(links, key=lambda link: link.set_at)
+    return [link for link_thread_id, link in room_links if link_thread_id == thread_id]
+
+
+async def read_resolved_thread_ids(
+    query_room_state: RoomStateQuerier,
+    room_id: str,
+) -> set[str] | None:
+    """Read thread IDs tagged as resolved in one room, or None if room state cannot be read."""
+    states = await query_room_state(room_id, THREAD_TAGS_EVENT_TYPE, None)
+    if states is None:
+        return None
+    resolved: set[str] = set()
+    for state_key, content in states.items():
+        if not isinstance(content, Mapping) or not content:
+            continue
+        pair = _parse_state_key_pair(state_key)
+        if pair is not None and pair[1] == RESOLVED_THREAD_TAG:
+            resolved.add(pair[0])
+    return resolved
 
 
 async def write_thread_link(
