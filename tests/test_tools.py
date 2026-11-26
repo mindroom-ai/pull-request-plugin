@@ -104,10 +104,17 @@ class FakeRoomState:
             "set_at": set_at,
         }
 
-    def set_resolved(self, thread_id: str, *, room_id: str = ROOM, active: bool = True) -> None:
+    def set_resolved(
+        self,
+        thread_id: str,
+        *,
+        room_id: str = ROOM,
+        active: bool = True,
+        set_at: str = "2026-01-01T00:00:00+00:00",
+    ) -> None:
         """Seed one resolved thread-tag state event or tombstone."""
         key = json.dumps([thread_id, "resolved"], separators=(",", ":"))
-        self.state[(room_id, TAGS_EVENT_TYPE, key)] = {"set_by": "@user:localhost"} if active else {}
+        self.state[(room_id, TAGS_EVENT_TYPE, key)] = {"set_by": "@user:localhost", "set_at": set_at} if active else {}
 
     async def _query(self, room_id: str, event_type: str, state_key: str | None) -> dict[str, Any] | None:
         if (room_id, event_type) in self.raise_queries:
@@ -395,6 +402,7 @@ async def test_list_room_scope_errors_on_auth_denial_and_state_failures(monkeypa
     assert "Not authorized" in denied_res["message"]
     room.querier.assert_not_awaited()
 
+    room.add_link("a/a#1")
     monkeypatch.setattr(module, "resolve_accessible_room_id", AsyncMock(return_value=(ROOM, None)))
     with room.context(thread_id=None, resolved_thread_id=None):
         room.fail_queries = {(ROOM, EVENT_TYPE)}
@@ -406,6 +414,56 @@ async def test_list_room_scope_errors_on_auth_denial_and_state_failures(monkeypa
         raised = json.loads(await tools.list_pull_requests(scope="room"))
 
     assert [failed_links["status"], failed_tags["status"], raised["status"]] == ["error"] * 3
+
+
+@pytest.mark.asyncio
+async def test_list_errors_on_room_access_transport_failures(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Transport errors while resolving room access return structured JSON errors without querying state."""
+    module = _load_tools_module()
+    monkeypatch.setattr(module, "resolve_accessible_room_id", AsyncMock(side_effect=TimeoutError("timed out")))
+    monkeypatch.setattr(module, "shared_room_ids", AsyncMock(side_effect=TimeoutError("timed out")))
+    tools = module.PullRequestTools()
+    room = FakeRoomState()
+
+    with room.context(thread_id=None, resolved_thread_id=None):
+        room_result = json.loads(await tools.list_pull_requests(scope="room", room_id=OTHER_ROOM))
+        all_result = json.loads(await tools.list_pull_requests(scope="all"))
+
+    assert room_result["status"] == "error"
+    assert room_result["action"] == "list"
+    assert all_result["status"] == "error"
+    assert all_result["action"] == "list"
+    room.querier.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_list_skips_thread_tags_query_for_empty_rooms(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rooms with zero PR links skip querying com.mindroom.thread.tags."""
+    module = _load_tools_module()
+    monkeypatch.setattr(module, "resolve_accessible_room_id", AsyncMock(return_value=(ROOM, None)))
+    monkeypatch.setattr(module, "shared_room_ids", AsyncMock(return_value=["!r1:localhost", "!empty:localhost"]))
+    tools = module.PullRequestTools()
+    room = FakeRoomState()
+    room.add_link("a/a#1", room_id="!r1:localhost", thread_id="$t1")
+
+    with room.context(thread_id=None, resolved_thread_id=None):
+        empty_room = json.loads(await tools.list_pull_requests(scope="room"))
+        assert empty_room["status"] == "ok"
+        assert empty_room["count"] == 0
+        assert empty_room["pull_requests"] == []
+        assert [call.args for call in room.querier.await_args_list] == [(ROOM, EVENT_TYPE, None)]
+
+        room.querier.reset_mock()
+        all_rooms = json.loads(await tools.list_pull_requests(scope="all"))
+
+    assert all_rooms["status"] == "ok"
+    assert [item["name"] for item in all_rooms["pull_requests"]] == ["a/a#1"]
+    queried = {(call.args[0], call.args[1]) for call in room.querier.await_args_list}
+    assert queried == {
+        ("!r1:localhost", EVENT_TYPE),
+        ("!r1:localhost", TAGS_EVENT_TYPE),
+        ("!empty:localhost", EVENT_TYPE),
+    }
 
 
 @pytest.mark.asyncio
@@ -493,13 +551,23 @@ async def test_list_all_scope_bounds_room_query_concurrency(monkeypatch: pytest.
         {"scope": "thread", "room_id": OTHER_ROOM},
         {"scope": "thread", "resolved": False},
         {"scope": "all", "room_id": OTHER_ROOM},
+        {"scope": "room", "room_id": "all"},
+        {"scope": "room", "room_id": " all "},
         {"scope": "room", "room_id": "   "},
     ],
 )
 @pytest.mark.asyncio
-async def test_list_rejects_invalid_scope_and_argument_combinations(kwargs: dict[str, Any]) -> None:
-    """Invalid scopes, empty room IDs, and incompatible combinations return errors without querying state."""
-    tools = _load_tools_module().PullRequestTools()
+async def test_list_rejects_invalid_scope_and_argument_combinations(
+    kwargs: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Invalid scopes, empty room IDs, and incompatible combinations return errors without resolving rooms or state."""
+    module = _load_tools_module()
+    resolve_mock = AsyncMock()
+    shared_mock = AsyncMock()
+    monkeypatch.setattr(module, "resolve_accessible_room_id", resolve_mock)
+    monkeypatch.setattr(module, "shared_room_ids", shared_mock)
+    tools = module.PullRequestTools()
     room = FakeRoomState()
 
     with room.context():
@@ -507,4 +575,6 @@ async def test_list_rejects_invalid_scope_and_argument_combinations(kwargs: dict
 
     assert result["status"] == "error"
     assert result["action"] == "list"
+    resolve_mock.assert_not_awaited()
+    shared_mock.assert_not_awaited()
     room.querier.assert_not_awaited()

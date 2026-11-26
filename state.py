@@ -138,6 +138,10 @@ async def read_thread_links(
     return [link for link_thread_id, link in room_links if link_thread_id == thread_id]
 
 
+def _is_non_empty_string(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
 async def read_resolved_thread_ids(
     query_room_state: RoomStateQuerier,
     room_id: str,
@@ -148,7 +152,9 @@ async def read_resolved_thread_ids(
         return None
     resolved: set[str] = set()
     for state_key, content in states.items():
-        if not isinstance(content, Mapping) or not content:
+        if not isinstance(content, Mapping):
+            continue
+        if not (_is_non_empty_string(content.get("set_by")) and _is_non_empty_string(content.get("set_at"))):
             continue
         pair = _parse_state_key_pair(state_key)
         if pair is not None and pair[1] == RESOLVED_THREAD_TAG:

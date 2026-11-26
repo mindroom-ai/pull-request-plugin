@@ -245,20 +245,27 @@ def test_read_room_links_distinguishes_failure_from_empty() -> None:
 
 
 def test_read_resolved_thread_ids_parses_tags_and_ignores_tombstones() -> None:
-    """Only non-empty resolved tag mappings are returned; tombstones and malformed keys are ignored."""
+    """Only valid resolved tag records with set_by and set_at are returned; tombstones and malformed entries are ignored."""
     module = _load_state_module()
     calls: list[tuple[str, str, str | None]] = []
+    valid_record = {"set_by": "@a:x", "set_at": "2026-01-01T00:00:00Z"}
     states: dict[str, Any] = {
-        '["$t1","resolved"]': {"set_by": "@a:x", "set_at": "2026-01-01T00:00:00Z"},
-        '["$t2", "resolved"]': {"note": "done"},
+        '["$t1","resolved"]': valid_record,
+        '["$t2", "resolved"]': {"set_by": "@b:x", "set_at": "2026-01-02T00:00:00Z", "note": "done"},
+        '["$t_note_only","resolved"]': {"note": "done"},
+        '["$t_no_set_at","resolved"]': {"set_by": "@a:x"},
+        '["$t_no_set_by","resolved"]': {"set_at": "2026-01-01T00:00:00Z"},
+        '["$t_blank_by","resolved"]': {"set_by": "   ", "set_at": "2026-01-01T00:00:00Z"},
+        '["$t_blank_at","resolved"]': {"set_by": "@a:x", "set_at": "   "},
+        '["$t_bad_types","resolved"]': {"set_by": 123, "set_at": "2026-01-01T00:00:00Z"},
         '["$t3","resolved"]': {},
-        '["$t4","blocked"]': {"set_by": "@a:x"},
-        '["","resolved"]': {"set_by": "@a:x"},
-        '["   ","resolved"]': {"set_by": "@a:x"},
+        '["$t4","blocked"]': valid_record,
+        '["","resolved"]': valid_record,
+        '["   ","resolved"]': valid_record,
         '["$t5","resolved"]': None,
-        '["$t6","resolved","extra"]': {"set_by": "@a:x"},
-        '[123,"resolved"]': {"set_by": "@a:x"},
-        "$legacy": {"tags": {"resolved": {"set_by": "@a:x"}}},
+        '["$t6","resolved","extra"]': valid_record,
+        '[123,"resolved"]': valid_record,
+        "$legacy": {"tags": {"resolved": valid_record}},
     }
 
     async def query(room_id: str, event_type: str, state_key: str | None) -> dict[str, Any] | None:

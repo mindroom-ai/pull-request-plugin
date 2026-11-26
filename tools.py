@@ -17,6 +17,7 @@ from mindroom.plugin_api import (
     ToolFileAccess,
     ToolRuntimeContext,
     ToolStatus,
+    get_logger,
     get_tool_runtime_context,
     register_tool_with_metadata,
     resolve_accessible_room_id,
@@ -40,6 +41,7 @@ if TYPE_CHECKING:
 type _ListScope = Literal["thread", "room", "all"]
 _VALID_SCOPES = frozenset({"thread", "room", "all"})
 _ROOM_QUERY_CONCURRENCY = 6
+logger = get_logger(__name__)
 
 
 def _now_iso() -> str:
@@ -104,6 +106,34 @@ def _link_row(link: ThreadLink, **extra: object) -> dict[str, object]:
     }
 
 
+def _infer_list_scope(
+    scope: _ListScope | None,
+    normalized_room_id: str | None,
+    resolved: bool | None,
+) -> _ListScope:
+    if scope is not None:
+        return scope
+    if normalized_room_id == "all":
+        return "all"
+    if normalized_room_id is not None or resolved is not None:
+        return "room"
+    return "thread"
+
+
+def _scope_combination_error(
+    scope: _ListScope,
+    normalized_room_id: str | None,
+    resolved: bool | None,
+) -> str | None:
+    if scope == "thread" and (normalized_room_id is not None or resolved is not None):
+        return "scope='thread' cannot be combined with room_id or resolved."
+    if scope == "room" and normalized_room_id == "all":
+        return "scope='room' cannot be combined with room_id='all'; use scope='all' instead."
+    if scope == "all" and normalized_room_id not in (None, "all"):
+        return "scope='all' cannot be combined with a specific room_id."
+    return None
+
+
 def _resolve_list_scope(
     scope: _ListScope | None,
     room_id: str | None,
@@ -119,19 +149,9 @@ def _resolve_list_scope(
             return _error("list", "room_id must be a non-empty string.")
         normalized_room_id = room_id.strip()
 
-    if scope is not None:
-        effective_scope: _ListScope = scope
-    elif normalized_room_id == "all":
-        effective_scope = "all"
-    elif normalized_room_id is not None or resolved is not None:
-        effective_scope = "room"
-    else:
-        effective_scope = "thread"
-
-    if effective_scope == "thread" and (normalized_room_id is not None or resolved is not None):
-        return _error("list", "scope='thread' cannot be combined with room_id or resolved.")
-    if effective_scope == "all" and normalized_room_id not in (None, "all"):
-        return _error("list", "scope='all' cannot be combined with a specific room_id.")
+    effective_scope = _infer_list_scope(scope, normalized_room_id, resolved)
+    if (error_message := _scope_combination_error(effective_scope, normalized_room_id, resolved)) is not None:
+        return _error("list", error_message)
     return effective_scope, normalized_room_id
 
 
@@ -141,19 +161,21 @@ async def _read_room_rows(
     *,
     resolved: bool | None,
 ) -> list[dict[str, object]] | None:
-    links_result, resolved_result = await asyncio.gather(
-        read_room_links(querier, room_id),
-        read_resolved_thread_ids(querier, room_id),
-        return_exceptions=True,
-    )
-    for result in (links_result, resolved_result):
-        if isinstance(result, BaseException) and not isinstance(result, Exception):
-            raise result
-    if not isinstance(links_result, list) or not isinstance(resolved_result, set):
+    try:
+        links = await read_room_links(querier, room_id)
+        if links is None:
+            return None
+        if not links:
+            return []
+        resolved_ids = await read_resolved_thread_ids(querier, room_id)
+    except Exception:
+        logger.warning("pull_requests_room_state_read_failed", room_id=room_id, exc_info=True)
+        return None
+    if resolved_ids is None:
         return None
     rows: list[dict[str, object]] = []
-    for thread_id, link in links_result:
-        is_resolved = thread_id in resolved_result
+    for thread_id, link in links:
+        is_resolved = thread_id in resolved_ids
         if resolved is None or is_resolved is resolved:
             rows.append(_link_row(link, room_id=room_id, thread_id=thread_id, resolved=is_resolved))
     return rows
@@ -166,7 +188,11 @@ async def _list_room_pull_requests(
     room_id: str | None,
     resolved: bool | None,
 ) -> str:
-    resolved_room_id, room_error = await resolve_accessible_room_id(context, room_id, contact_room_ok=True)
+    try:
+        resolved_room_id, room_error = await resolve_accessible_room_id(context, room_id, contact_room_ok=True)
+    except Exception:
+        logger.warning("pull_requests_room_access_failed", room_id=room_id or context.room_id, exc_info=True)
+        return _error("list", "Failed to verify room access.")
     if room_error is not None or resolved_room_id is None:
         return _error("list", room_error or "Unknown room.")
     rows = await _read_room_rows(querier, resolved_room_id, resolved=resolved)
@@ -189,7 +215,11 @@ async def _list_all_pull_requests(
     *,
     resolved: bool | None,
 ) -> str:
-    room_ids = await shared_room_ids(context, contact_room_ok=True)
+    try:
+        room_ids = await shared_room_ids(context, contact_room_ok=True)
+    except Exception:
+        logger.warning("pull_requests_shared_rooms_failed", exc_info=True)
+        return _error("list", "Failed to resolve shared rooms.")
     semaphore = asyncio.Semaphore(_ROOM_QUERY_CONCURRENCY)
 
     async def read_one(room_id: str) -> list[dict[str, object]] | None:
