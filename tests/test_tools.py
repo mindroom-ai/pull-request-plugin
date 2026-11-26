@@ -15,9 +15,14 @@ from uuid import uuid4
 
 import pytest
 
+from mindroom.approval.tool_approval import scheduled_call_offers_any_arguments
+from mindroom.config.legacy_fields import retired_consolidated_approval_error
+from mindroom.config.main import Config, ConfigRuntimeValidationError
+from mindroom.constants import resolve_runtime_paths
 from mindroom.hooks import HookBindings
 from mindroom.message_target import MessageTarget
-from mindroom.tool_system.registry import plugin_module_registrations
+from mindroom.tool_approval_grants import grant_operation
+from mindroom.tool_system.registry import ToolRegistry, plugin_module_registrations
 from mindroom.tool_system.runtime_context import ToolRuntimeContext, tool_runtime_context
 
 if TYPE_CHECKING:
@@ -140,18 +145,118 @@ class FakeRoomState:
 
 
 def test_registration_and_single_tool_exposure() -> None:
-    """The toolkit requires room context and exposes only the single pull_requests tool."""
+    """The toolkit requires room context, declares grant/retirement metadata, and exposes only pull_requests."""
     module = _load_tools_module()
     registration = module.registrations["pull_requests"]
     tools = module.PullRequestTools()
 
     assert registration.requires_room_context is True
+    assert registration.action_scoped_grants == ("pull_requests",)
+    assert registration.retired_functions == {
+        "link_pull_request": "pull_requests",
+        "unlink_pull_request": "pull_requests",
+        "list_pull_requests": "pull_requests",
+    }
     assert list(tools.functions) == []
     assert list(tools.async_functions) == ["pull_requests"]
     assert [fn.__name__ for fn in tools.tools] == ["pull_requests"]
     assert not hasattr(tools, "link_pull_request")
     assert not hasattr(tools, "unlink_pull_request")
     assert not hasattr(tools, "list_pull_requests")
+
+
+def test_action_scoped_grants_separate_operations_per_action() -> None:
+    """Timed approval grants bind to (pull_requests, action) so approving list leaves unlink and link gated."""
+    module = _load_tools_module()
+    registry = ToolRegistry(entries=module.registrations)
+    config = Config(tool_approval={"scheduled_any_arguments": True})
+
+    list_op = grant_operation(config, "pull_requests", {"action": "list"}, tools=registry)
+    unlink_op = grant_operation(config, "pull_requests", {"action": "unlink"}, tools=registry)
+    link_op = grant_operation(config, "pull_requests", {"action": "link"}, tools=registry)
+
+    assert list_op is not None
+    assert unlink_op is not None
+    assert link_op is not None
+    assert list_op == grant_operation(config, "pull_requests", {"action": " list "}, tools=registry)
+    assert len({list_op.key, unlink_op.key, link_op.key}) == 3
+    for bad_args in ({}, {"action": ""}, {"action": "   "}, {"action": 123}):
+        assert grant_operation(config, "pull_requests", bad_args, tools=registry) is None
+    assert not scheduled_call_offers_any_arguments(
+        config,
+        "pull_requests",
+        {"action": "list"},
+        requester_id="@user:localhost",
+        approver_id="@user:localhost",
+        authored_confirmation=False,
+        tools=registry,
+    )
+
+
+def test_retired_functions_fail_closed_in_config_validation(tmp_path: Path) -> None:
+    """Legacy approval rules for retired pull-request functions fail closed until pull_requests is explicitly ruled."""
+    plugin_root = Path(__file__).resolve().parents[1]
+    module = _load_tools_module()
+    registration = module.registrations["pull_requests"]
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("router:\n  model: default\n", encoding="utf-8")
+    runtime_paths = resolve_runtime_paths(
+        config_path=config_path,
+        storage_path=tmp_path / "mindroom_data",
+        process_env={
+            "MATRIX_HOMESERVER": "http://localhost:8008",
+            "MINDROOM_NAMESPACE": "",
+        },
+    )
+
+    for legacy_name in ("link_pull_request", "unlink_pull_request", "list_pull_requests"):
+        approval_config = Config(
+            tool_approval={
+                "default": "auto_approve",
+                "rules": [{"match": legacy_name, "action": "require_approval"}],
+            },
+        ).tool_approval
+        error = retired_consolidated_approval_error(
+            "pull_requests",
+            approval_config.rules,
+            approval_config.default,
+            approval_config.timeout_days,
+            renames=registration.retired_functions,
+        )
+        assert error is not None
+        assert legacy_name in error
+        assert "pull_requests" in error
+
+        stale_data = {
+            "models": {"default": {"provider": "openai", "id": "x"}},
+            "plugins": [{"path": str(plugin_root)}],
+            "agents": {
+                "code": {"display_name": "Code", "tools": ["pull_requests"], "include_default_tools": False},
+            },
+            "tool_approval": {
+                "default": "auto_approve",
+                "rules": [{"match": legacy_name, "action": "require_approval"}],
+            },
+        }
+        with pytest.raises(ConfigRuntimeValidationError, match="pull_requests"):
+            Config.validate_with_runtime(stale_data, runtime_paths)
+
+    migrated_data = {
+        "models": {"default": {"provider": "openai", "id": "x"}},
+        "plugins": [{"path": str(plugin_root)}],
+        "agents": {
+            "code": {"display_name": "Code", "tools": ["pull_requests"], "include_default_tools": False},
+        },
+        "tool_approval": {
+            "default": "auto_approve",
+            "rules": [
+                {"match": "unlink_pull_request", "action": "require_approval"},
+                {"match": "pull_requests", "action": "require_approval"},
+            ],
+        },
+    }
+    loaded = Config.validate_with_runtime(migrated_data, runtime_paths)
+    assert [rule.match for rule in loaded.tool_approval.rules] == ["unlink_pull_request", "pull_requests"]
 
 
 def _key(name: str) -> tuple[str, str, str]:

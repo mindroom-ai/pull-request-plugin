@@ -7,6 +7,7 @@ import json
 import re
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 THREAD_PULL_REQUEST_EVENT_TYPE = "com.mindroom.thread.pull_request"
@@ -147,6 +148,16 @@ def _is_non_empty_string(value: object) -> bool:
     return isinstance(value, str) and bool(value.strip())
 
 
+def _is_iso_timestamp(value: object) -> bool:
+    if not isinstance(value, str) or not value:
+        return False
+    try:
+        datetime.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
 async def read_resolved_thread_ids(
     query_room_state: RoomStateQuerier,
     room_id: str,
@@ -159,7 +170,7 @@ async def read_resolved_thread_ids(
     for state_key, content in states.items():
         if not isinstance(content, Mapping):
             continue
-        if not (_is_non_empty_string(content.get("set_by")) and _is_non_empty_string(content.get("set_at"))):
+        if not (_is_non_empty_string(content.get("set_by")) and _is_iso_timestamp(content.get("set_at"))):
             continue
         pair = _parse_state_key_pair(state_key)
         if pair is not None and pair[1] == RESOLVED_THREAD_TAG:

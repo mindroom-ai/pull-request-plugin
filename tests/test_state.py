@@ -246,18 +246,23 @@ def test_read_room_links_distinguishes_failure_from_empty() -> None:
 
 
 def test_read_resolved_thread_ids_parses_tags_and_ignores_tombstones() -> None:
-    """Only valid resolved tag records with set_by and set_at are returned; tombstones and malformed entries are ignored."""
+    """Only valid resolved tag records with set_by and ISO set_at are returned; tombstones and malformed entries are ignored."""
     module = _load_state_module()
     calls: list[tuple[str, str, str | None]] = []
     valid_record = {"set_by": "@a:x", "set_at": "2026-01-01T00:00:00Z"}
     states: dict[str, Any] = {
         '["$t1","resolved"]': valid_record,
-        '["$t2", "resolved"]': {"set_by": "@b:x", "set_at": "2026-01-02T00:00:00Z", "note": "done"},
+        '["$t2", "resolved"]': {"set_by": "@b:x", "set_at": "2026-11-22T18:11:53.346Z", "note": "done"},
+        '["$t_offset","resolved"]': {"set_by": "@c:x", "set_at": "2026-01-02T00:00:00+00:00"},
         '["$t_note_only","resolved"]': {"note": "done"},
         '["$t_no_set_at","resolved"]': {"set_by": "@a:x"},
         '["$t_no_set_by","resolved"]': {"set_at": "2026-01-01T00:00:00Z"},
         '["$t_blank_by","resolved"]': {"set_by": "   ", "set_at": "2026-01-01T00:00:00Z"},
         '["$t_blank_at","resolved"]': {"set_by": "@a:x", "set_at": "   "},
+        '["$t_bad_at","resolved"]': {"set_by": "@a:x", "set_at": "bad"},
+        '["$t_partial_at","resolved"]': {"set_by": "@a:x", "set_at": "2026-01"},
+        '["$t_padded_at","resolved"]': {"set_by": "@a:x", "set_at": " 2026-01-01T00:00:00Z "},
+        '["$t_int_at","resolved"]': {"set_by": "@a:x", "set_at": 123},
         '["$t_bad_types","resolved"]': {"set_by": 123, "set_at": "2026-01-01T00:00:00Z"},
         '["$t3","resolved"]': {},
         '["$t4","blocked"]': valid_record,
@@ -273,7 +278,7 @@ def test_read_resolved_thread_ids_parses_tags_and_ignores_tombstones() -> None:
         calls.append((room_id, event_type, state_key))
         return states
 
-    assert asyncio.run(module.read_resolved_thread_ids(query, "!room")) == {"$t1", "$t2"}
+    assert asyncio.run(module.read_resolved_thread_ids(query, "!room")) == {"$t1", "$t2", "$t_offset"}
     assert calls == [("!room", TAGS_EVENT_TYPE, None)]
 
 

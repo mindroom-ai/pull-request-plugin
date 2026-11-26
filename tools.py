@@ -332,6 +332,12 @@ class PullRequestTools(Toolkit):
     icon="LuGitPullRequest",
     icon_color="text-green-600",
     requires_room_context=True,
+    action_scoped_grants=("pull_requests",),
+    retired_functions={
+        "link_pull_request": "pull_requests",
+        "unlink_pull_request": "pull_requests",
+        "list_pull_requests": "pull_requests",
+    },
 )
 def pull_requests_factory() -> type[PullRequestTools]:
     """Factory function for the pull-requests toolkit."""
