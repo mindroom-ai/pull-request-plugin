@@ -132,10 +132,15 @@ async def read_thread_links(
     thread_id: str,
 ) -> list[ThreadLink]:
     """Read the valid pull request links of one thread, in set_at order."""
-    room_links = await read_room_links(query_room_state, room_id)
-    if room_links is None:
+    states = await query_room_state(room_id, THREAD_PULL_REQUEST_EVENT_TYPE, None)
+    if states is None:
         return []
-    return [link for link_thread_id, link in room_links if link_thread_id == thread_id]
+    links = [
+        parsed[1]
+        for state_key, content in states.items()
+        if (parsed := _parse_room_link(state_key, content)) is not None and parsed[0] == thread_id
+    ]
+    return sorted(links, key=lambda link: (link.set_at, link.pull_request.name))
 
 
 def _is_non_empty_string(value: object) -> bool:

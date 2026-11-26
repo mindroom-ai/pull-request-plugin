@@ -144,11 +144,12 @@ def _key(thread_id: str, name: str) -> str:
 
 
 def test_read_thread_links_filters_and_orders() -> None:
-    """Only valid links of the thread come back, ordered by set_at."""
+    """Only valid links of the thread come back, ordered by (set_at, name)."""
     module = _load_state_module()
     calls: list[tuple[str, str, str | None]] = []
     states: dict[str, Any] = {
         _key("$t", "o/r#2"): {"url": "https://github.com/o/r/pull/2", "set_by": "@a:x", "set_at": "2026-02"},
+        _key("$t", "o/r#10"): {"url": "https://github.com/o/r/pull/10", "set_by": "@c:x", "set_at": "2026-01"},
         _key("$t", "o/r#1"): {"url": "https://github.com/o/r/pull/1", "set_by": "@b:x", "set_at": "2026-01"},
         _key("$t", "o/r#3"): {},
         "not json": {"url": "https://github.com/o/r/pull/9", "set_by": "@a:x", "set_at": "2026-03"},
@@ -162,7 +163,7 @@ def test_read_thread_links_filters_and_orders() -> None:
         return states
 
     links = asyncio.run(module.read_thread_links(query, "!room", "$t"))
-    assert [link.pull_request.name for link in links] == ["o/r#1", "o/r#2"]
+    assert [link.pull_request.name for link in links] == ["o/r#1", "o/r#10", "o/r#2"]
     assert links[0].set_by == "@b:x"
     assert links[0].set_at == "2026-01"
     assert calls == [("!room", EVENT_TYPE, None)]
