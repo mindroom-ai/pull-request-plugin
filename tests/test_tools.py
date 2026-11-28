@@ -24,8 +24,12 @@ from mindroom.hooks import HookBindings
 from mindroom.message_target import MessageTarget
 from mindroom.plugin_api import Toolkit
 from mindroom.tool_approval_grants import grant_operation
+from mindroom.tool_jobs import execution as job_execution
+from mindroom.tool_jobs.resources import ExecutionResources, bind_execution_resources
+from mindroom.tool_system.output_files import ToolOutputFilePolicy
 from mindroom.tool_system.registry import ToolRegistry, plugin_module_registrations
 from mindroom.tool_system.runtime_context import ToolRuntimeContext, tool_runtime_context
+from mindroom.tool_system.toolkits import adapt_toolkit, configure_toolkit_functions
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -166,6 +170,50 @@ def test_registration_and_single_tool_exposure() -> None:
     assert not hasattr(tools, "link_pull_request")
     assert not hasattr(tools, "unlink_pull_request")
     assert not hasattr(tools, "list_pull_requests")
+
+
+def test_pull_requests_opts_out_of_reserved_meta_parameters(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PullRequestTools opts out of background_after and mindroom_output_path in its adapted schema."""
+    module = _load_tools_module()
+
+    assert module.PullRequestTools.offer_background_after is False
+    assert module.PullRequestTools.offer_output_path is False
+
+    tools = configure_toolkit_functions(
+        module.PullRequestTools(),
+        output_files=ToolOutputFilePolicy(
+            workspace_root=tmp_path,
+            max_bytes=1024,
+            auto_save_threshold_bytes=1024,
+        ),
+    )
+    adapted = adapt_toolkit(tools, key="pull_requests")
+    (function,) = adapted.functions
+    assert function.name == "pull_requests"
+    assert function.offer_background_after is False
+    assert function.offer_output_path is False
+    assert "background_after" not in function.parameters["properties"]
+    assert "mindroom_output_path" not in function.parameters["properties"]
+
+    actor = job_execution.JobActor(
+        name="code",
+        team=False,
+        depth=0,
+        tools=job_execution.assembled_job_tools([(tools, function)], {}),
+    )
+    context = _tool_context()
+    monkeypatch.setattr(job_execution, "get_background_runtime", lambda _runtime_paths: object())
+    with tool_runtime_context(context), bind_execution_resources(ExecutionResources()):
+        assert job_execution.wait_mode(actor.tools["pull_requests"], depth=0, context=context) == "managed"
+        (definition,) = job_execution.offered_definitions(actor, [function.definition()])
+
+    assert "background_after" not in definition.parameters["properties"]
+    assert "mindroom_output_path" not in definition.parameters["properties"]
+    assert set(definition.parameters["properties"]) == {"action", "url", "room_id", "resolved"}
+    assert definition.parameters["required"] == ["action"]
 
 
 def test_action_scoped_grants_separate_operations_per_action() -> None:

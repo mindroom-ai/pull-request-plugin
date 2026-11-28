@@ -276,6 +276,9 @@ async def _list_pull_requests(*, room_id: str | None, resolved: bool | None) -> 
 class PullRequestTools(Toolkit):
     """Toolkit for linking, unlinking, and listing GitHub pull requests across threads and rooms."""
 
+    offer_background_after = False
+    offer_output_path = False
+
     def __init__(self) -> None:
         super().__init__(
             name="pull_requests",
